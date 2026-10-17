@@ -14,7 +14,8 @@
 
 #include "duco_ros_driver/InterlockPersistence.hpp"
 
-namespace {
+namespace
+{
 
 using duco_reliability::InterlockPersistence;
 

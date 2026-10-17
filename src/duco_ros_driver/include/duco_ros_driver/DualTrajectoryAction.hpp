@@ -1703,6 +1703,15 @@ private:
 
     auto result = std::make_shared<FollowJointTrajectory::Result>();
     result->error_code = error_code;
+    // MoveIt's simple controller manager prints Result.error_string next to the
+    // error code whenever an execution does not succeed ("... failed with error
+    // %s: %s"), so the reason has to travel in the result itself and not only in
+    // the log.  It stays empty for SUCCESSFUL, so a caller that reads only
+    // error_string cannot mistake a success for a failure.
+    if (error_code != FollowJointTrajectory::Result::SUCCESSFUL) {
+      result->error_string = !reason.empty() ? reason :
+        (latched_reason.empty() ? std::string("trajectory execution did not succeed") : latched_reason);
+    }
     if (!reason.empty()) {
       if (code == rclcpp_action::ResultCode::SUCCEEDED) {
         RCLCPP_INFO(get_logger(), "Goal %s completed: %s", id.c_str(), reason.c_str());

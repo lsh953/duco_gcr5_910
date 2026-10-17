@@ -441,11 +441,14 @@ public:
   }
 
   /// Like waitForResult(), but also returns the FollowJointTrajectory error code
-  /// so a test can distinguish a clean cancellation from a failed one.
+  /// so a test can distinguish a clean cancellation from a failed one.  When
+  /// error_string_out is given it also hands back Result.error_string, which is
+  /// the field MoveIt's simple controller manager prints alongside the code.
   bool waitForResultWithError(
     const std::shared_ptr<ClientGoalHandle> & handle,
     rclcpp_action::ResultCode & code_out, int32_t & error_out,
-    std::chrono::milliseconds timeout = 5s)
+    std::chrono::milliseconds timeout = 5s,
+    std::string * error_string_out = nullptr)
   {
     if (!handle) {
       return false;
@@ -457,6 +460,9 @@ public:
     const auto wrapped = future.get();
     code_out = wrapped.code;
     error_out = wrapped.result ? wrapped.result->error_code : 0;
+    if (error_string_out) {
+      *error_string_out = wrapped.result ? wrapped.result->error_string : std::string();
+    }
     return true;
   }
 
@@ -631,11 +637,20 @@ TEST_F(DualActionTest, CancelTimeoutIsReportedAsAbortedNotCanceled)
 
   rclcpp_action::ResultCode code{};
   int32_t error_code{};
-  ASSERT_TRUE(h.waitForResultWithError(handle, code, error_code, 8s));
+  std::string error_string;
+  ASSERT_TRUE(h.waitForResultWithError(handle, code, error_code, 8s, &error_string));
   EXPECT_EQ(code, rclcpp_action::ResultCode::ABORTED)
     << "a cancel that never produced a result must not be reported as a cancellation";
   EXPECT_EQ(error_code, FollowJointTrajectory::Result::GOAL_TOLERANCE_VIOLATED)
     << "the trajectory outcome was never established, so it is not a success";
+  // MoveIt's controller handle prints Result.error_string next to the error
+  // code, so the uncertainty has to be stated there as well.
+  EXPECT_FALSE(error_string.empty())
+    << "Result.error_string must carry the reason, not only the log";
+  EXPECT_NE(error_string.find("timed out"), std::string::npos)
+    << "unexpected Result.error_string: " << error_string;
+  EXPECT_NE(error_string.find("may still be executing"), std::string::npos)
+    << "the result must not read as if the robot had stopped: " << error_string;
 }
 
 // ---------------------------------------------------------------------------
