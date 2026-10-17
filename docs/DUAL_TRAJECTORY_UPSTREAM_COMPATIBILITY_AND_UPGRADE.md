@@ -20,7 +20,7 @@
 | 3 | 该变更使 MoveIt 侧的最终错误码由 `PREEMPTED(-7)` 变为 `CONTROL_FAILED(-4)` | **上位机需确认分支逻辑** |
 | 4 | MoveIt 自身**不会**在 ABORTED 后自动重发轨迹 | 不需要改 MoveIt 配置 |
 | 5 | 本轮之前 `Result.error_string` 一直为空，MoveIt 的告警行因此丢掉了原因 | 本轮已补齐（§3.2） |
-| 6 | 仓库内唯一的自研 Action Client `send_joint_waypoints.py` 只读 `error_code`，失败也返回退出码 0 | **待办**，见 §2.3 |
+| 6 | 仓库内唯一的自研 Action Client `send_joint_waypoints.py` 只读 `error_code`，失败也返回退出码 0 | 第 4 轮已修复（§2.3） |
 | 7 | 上位机/客户 HMI 的 Action Client **不在本仓库内**，无法核对 | **必须由上位机侧确认**，见 §2.5 |
 | 8 | 软件联锁触发后，任何"自动重试"都会被拒绝，但**这不是硬件安全功能** | 见 §4 |
 
@@ -138,25 +138,31 @@ void FollowJointTrajectoryControllerHandle::controllerDoneCallback(const Wrapped
 | 上游 | 终止状态 | `error_code` | `error_string` | 自动重试 |
 |---|---|---|---|---|
 | MoveIt 2.12.3 | ✅ | ✅ | ✅（写进 WARN 日志） | ❌ |
-| `send_joint_waypoints.py` | ❌ | ✅ | ❌ | ❌ |
+| `send_joint_waypoints.py` | ✅（第 4 轮补上） | ✅ | ✅（第 4 轮补上） | ❌ |
 | `twin_common.py`（测试） | ✅ | ✅ | ❌ | ❌（Phase A 的重试只针对"目标被拒绝"） |
 | 上位机 | **未知** | **未知** | **未知** | **未知** |
 
-### 2.3 仓库内 Action Client：`send_joint_waypoints.py`（**未修改，列为待办**）
+### 2.3 仓库内 Action Client：`send_joint_waypoints.py`（**第 4 轮已修复**）
 
-`src/duco_gcr5_910_moveit_config/scripts/send_joint_waypoints.py` 的行为：
+`src/duco_gcr5_910_moveit_config/scripts/send_joint_waypoints.py` 现在的行为：
 
-- 只 `send_goal_async` → 等结果 → 打印 `result.error_code`；
-- **不读终止状态**，也**不读 `error_string`**；
-- 失败/取消/中止时**仍然返回退出码 0**（`main()` 只在抛异常时返回非零）；
-- 没有自动重试。
+- `send_goal_async` → 等结果 → **同时**判定终止状态、`error_code` 与 `error_string`；
+- 只有 `GoalStatus.STATUS_SUCCEEDED` **且** `error_code == SUCCESSFUL` 才返回退出码 0；
+- 其余全部返回非零退出码：无 Action Server、目标被拒绝、ABORTED、CANCELED、
+  UNKNOWN/未知状态、`error_code` 非 `SUCCESSFUL`、Result 对象缺失、YAML/路径点非法、
+  通信异常；
+- 失败日志包含失败原因、`action_status`、`error_code`、`error_string`，不是裸数字；
+- **没有**自动重试，也**不会**自动发送下一条轨迹；一次调用只发一个目标。
 
-因此：取消超时在脚本里表现为打印 `error_code=-5`，但**外壳脚本无法据此判断失败**。
-这是本仓库自带的运维脚本缺口，与本次变更叠加后更容易被忽略。
+CLI 参数（`waypoints_file` / `--action` / `--wait-sec`）、YAML 路径点格式、轨迹合法性检查、
+默认 Action 名（`/arm_1_controller/follow_joint_trajectory`）全部保持不变。
 
-> **建议（本轮未实施，避免扩大改动面）**：正式发布前把该脚本改为
-> ——若终止状态不是 `SUCCEEDED` 或以非零 `error_code` 结束，则打印原因并返回非零退出码；
-> 同时禁止在该脚本中实现"失败自动重发"。若需要，可在下一轮作为独立小改动提交并单独测试。
+> **注意（语义边界）**：退出码 0 只表示"Action Server 确认轨迹成功执行完毕"，
+> **不表示**任何硬件级停止确认；非零退出码也不表示机械臂已经停下——
+> 取消超时等情况下真实执行结果未知，必须由人工按联锁恢复流程处理。
+
+对应回归测试：`src/duco_gcr5_910_moveit_config/test/test_send_joint_waypoints.py`
+（63 个用例，含一个进程内模拟 Action Server 的端到端组；见第 4 轮交接文件）。
 
 ### 2.4 孪生验证脚本（测试工具，不影响生产）
 
@@ -335,7 +341,8 @@ launch 文件与孪生脚本已同步；外部启动文件/上位机参数列表
 - [ ] 上位机：确认不存在"失败后自动重发轨迹 / 自动下发下一条轨迹"。
 - [ ] 上位机：确认不会把"目标被拒绝"当作可无限重试的瞬时故障。
 - [ ] 上位机：确认没有被 `GOAL_TOLERANCE_VIOLATED = -5` 单独解释为"停在容差外"。
-- [ ] 运维：`send_joint_waypoints.py` 是否需要在正式发布前补上非零退出码（§2.3）。
+- [x] 运维：`send_joint_waypoints.py` 的退出码已修复（第 4 轮，§2.3）；无需再跟进。
+- [ ] 运维：确认外层脚本/调度器按非零退出码停止后续下发，且**不要**实现"失败自动重发"。
 - [ ] 部署：启动参数里的 `real_feedback_timeout` / `real_status_timeout` 是否已改名（§5.4）。
 - [ ] 部署：`server_host_1` 是否已显式配置（§5.5）。
 - [ ] 部署：确认 `fault_latch_file` 指向的位置在启动后**可写**，并检查诊断话题里 `persistence=ok`（§5.6）。
@@ -350,5 +357,6 @@ launch 文件与孪生脚本已同步；外部启动文件/上位机参数列表
    停止沿用"空 `JointTrajectory`"约定。因此取消超时后**无法**由软件证明机械臂已停止。
 2. 上位机 Action Client 不在本仓库内，§2.5 的四项确认**未经核对**。
 3. `GOAL_TOLERANCE_VIOLATED` 的语义重载（§3.1）是刻意的取舍，不是遗漏。
-4. `send_joint_waypoints.py` 的退出码缺口**本轮未修**（§2.3）。
+4. `send_joint_waypoints.py` 的退出码缺口已在第 4 轮修复（§2.3），
+   仓库内已无已知的"失败返回 0"Action Client。
 5. 孪生 Phase B 的 S2 只覆盖"正常取消"路径；取消超时/取消被拒只由 mock 集成测试覆盖。

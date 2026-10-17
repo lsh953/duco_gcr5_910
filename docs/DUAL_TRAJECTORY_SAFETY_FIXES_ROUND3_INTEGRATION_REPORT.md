@@ -369,8 +369,9 @@ git diff 31b2eaa..integration/round3-safety-fixes
 
 1. **上位机 Action Client 不在本仓库**：接口文档 §2.5 的四项确认（是否读终止状态 /
    `error_code` / `error_string`、是否有自动重试）**未经核对**，必须由上位机负责人完成。
-2. **`send_joint_waypoints.py` 的退出码缺口**：失败时仍返回 0，本轮**未修**（避免扩大改动面），
-   已列为待办。
+2. **`send_joint_waypoints.py` 的退出码缺口**：已在第 4 轮收尾中修复
+   （终止状态 + `error_code` + `error_string` 三重判定，失败一律非零退出码），
+   并补 `test/test_send_joint_waypoints.py` 回归测试；详见 `CODE_FREEZE_HANDOFF.md`。
 3. **无厂商停止确认接口**：取消超时后无法由软件证明机械臂已停止，
    这是"不确定性"的根源，只能靠物理急停与流程约束，不能靠软件弥补。
 4. **`GOAL_TOLERANCE_VIOLATED` 语义重载**：刻意保留，已在兼容性文档 §3.1 显式定义，
